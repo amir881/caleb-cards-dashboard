@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Download, Trophy, ListTodo, Newspaper, Plus } from 'lucide-react';
+import { RefreshCw, Download, Trophy, ListTodo, Newspaper, Plus, Upload } from 'lucide-react';
 import { KPICard } from './components/KPICard';
 import { PortfolioChart } from './components/PortfolioChart';
 import { CardTable } from './components/CardTable';
@@ -9,6 +9,7 @@ import { NotableSales } from './components/NotableSales';
 import { AddCardModal, CardFormData } from './components/AddCardModal';
 import { AcquireCardModal } from './components/AcquireCardModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { ImportModal } from './components/ImportModal';
 import {
   usePortfolioSummary,
   usePortfolioHistory,
@@ -45,6 +46,7 @@ function Dashboard() {
   const [cardToAcquire, setCardToAcquire] = useState<Card | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [cardToDelete, setCardToDelete] = useState<Card | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   const { data: summary, isLoading: summaryLoading } = usePortfolioSummary();
   const { data: history, isLoading: historyLoading } = usePortfolioHistory(365);
@@ -152,6 +154,13 @@ function Dashboard() {
               >
                 <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 {isRefreshing ? 'Refreshing...' : 'Refresh Prices'}
+              </button>
+              <button
+                onClick={() => setShowImportModal(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-bears-navy-light border border-bears-gray/30 hover:border-bears-orange/50 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                Import
               </button>
               <button
                 onClick={() => exportCSV.mutate()}
@@ -301,6 +310,15 @@ function Dashboard() {
           setCardToDelete(null);
         }}
         onConfirm={confirmDelete}
+      />
+
+      <ImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={() => {
+          queryClientHook.invalidateQueries({ queryKey: ['cards'] });
+          queryClientHook.invalidateQueries({ queryKey: ['portfolio'] });
+        }}
       />
     </div>
   );
