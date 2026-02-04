@@ -557,22 +557,147 @@ async def export_csv():
 
 # Import endpoint
 @app.post("/api/import/excel")
-async def import_excel(file: UploadFile = File(...)):
+async def import_excel_endpoint(file: UploadFile = File(...)):
     """Import cards from Excel file"""
-    from excel_import import import_excel, clear_all_cards
+    import pandas as pd
+    from database import Card, insert_card, parse_population, get_connection
 
-    # Save uploaded file temporarily
-    temp_path = Path("/tmp") / file.filename
-    with open(temp_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    # Clear existing cards
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM cards")
+    conn.commit()
+    conn.close()
+
+    # Read file content
+    content = await file.read()
+
+    # Save to temp file
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        tmp.write(content)
+        temp_path = tmp.name
 
     try:
-        clear_all_cards()
-        result = import_excel(str(temp_path))
-        return result
+        # Read Excel without headers first to find the header row
+        df_raw = pd.read_excel(temp_path, header=None)
+
+        # Find the header row (row containing 'Year')
+        header_row = None
+        for idx, row in df_raw.iterrows():
+            row_values = [str(v) for v in row.values]
+            if 'Year' in row_values:
+                header_row = idx
+                break
+
+        if header_row is None:
+            raise HTTPException(status_code=400, detail="Could not find header row with 'Year' column")
+
+        # Re-read with correct header
+        df = pd.read_excel(temp_path, header=header_row)
+
+        # Clean column names
+        df.columns = [str(col).strip() for col in df.columns]
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+
+        owned_count = 0
+        want_list_count = 0
+        total_cost = 0.0
+
+        for idx, row in df.iterrows():
+            try:
+                year = row.get('Year')
+                if pd.isna(year) or year == 'Year':
+                    continue
+
+                year = int(year)
+                set_name = str(row.get('Set', '')).strip()
+                parallel_rarity = str(row.get('Rarity / Type', '')).strip()
+
+                if not set_name or not parallel_rarity:
+                    continue
+
+                # Parse date acquired
+                date_acquired = row.get('Date Acquired')
+                if pd.isna(date_acquired):
+                    date_acquired = None
+                    is_owned = False
+                else:
+                    if isinstance(date_acquired, datetime):
+                        date_acquired = date_acquired.strftime('%Y-%m-%d')
+                    else:
+                        date_acquired = str(date_acquired)
+                    is_owned = True
+
+                # Parse graded status
+                graded_val = row.get('Graded?', '')
+                is_graded = str(graded_val).strip() == '☑'
+
+                # Grading company and grade
+                grading_company = row.get('Grading Company')
+                if pd.isna(grading_company):
+                    grading_company = None
+                else:
+                    grading_company = str(grading_company).strip()
+
+                grade = row.get('Grade')
+                if pd.isna(grade):
+                    grade = None
+                else:
+                    grade = float(grade)
+
+                # Cost
+                cost = row.get('Cost')
+                if pd.isna(cost):
+                    cost = None
+                else:
+                    cost = float(cost)
+                    if is_owned:
+                        total_cost += cost
+
+                # Authenticity guaranteed
+                auth_val = row.get('Authenticity Guaranteed?', '')
+                authenticity_guaranteed = str(auth_val).strip() == '☑'
+
+                # Parse population
+                serial_number, population = parse_population(parallel_rarity)
+
+                card = Card(
+                    id=None,
+                    year=year,
+                    set_name=set_name,
+                    parallel_rarity=parallel_rarity,
+                    serial_number=serial_number,
+                    population=population,
+                    date_acquired=date_acquired,
+                    is_graded=is_graded,
+                    grading_company=grading_company,
+                    grade=grade,
+                    cost_basis=cost,
+                    authenticity_guaranteed=authenticity_guaranteed,
+                    is_owned=is_owned
+                )
+
+                insert_card(card)
+
+                if is_owned:
+                    owned_count += 1
+                else:
+                    want_list_count += 1
+
+            except Exception as e:
+                print(f"Row {idx} error: {e}")
+                continue
+
+        return {
+            'owned_count': owned_count,
+            'want_list_count': want_list_count,
+            'total_cost_basis': total_cost,
+            'message': f'Successfully imported {owned_count} owned cards and {want_list_count} want list cards'
+        }
     finally:
-        temp_path.unlink(missing_ok=True)
+        import os
+        os.unlink(temp_path)
 
 
 if __name__ == "__main__":
